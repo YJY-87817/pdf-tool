@@ -382,6 +382,23 @@ function parsePageRange(value) {
   return [...indexes].sort((left, right) => left - right).map((index) => state.pages[index])
 }
 
+function formatPageRange(pageNumbers) {
+  const ranges = []
+  for (const pageNumber of pageNumbers) {
+    const last = ranges.at(-1)
+    if (last && pageNumber === last[1] + 1) last[1] = pageNumber
+    else ranges.push([pageNumber, pageNumber])
+  }
+  return ranges.map(([start, end]) => (start === end ? `${start}` : `${start}-${end}`)).join(', ')
+}
+
+function getDefaultSplitRange() {
+  const selectedNumbers = state.pages
+    .map((page, index) => (state.selectedPages.has(page.id) ? index + 1 : null))
+    .filter((pageNumber) => pageNumber !== null)
+  return selectedNumbers.length ? formatPageRange(selectedNumbers) : `1-${state.pages.length}`
+}
+
 async function createPdf(pages) {
   const { PDFDocument, degrees } = await loadPdfRuntime()
   const output = await PDFDocument.create()
@@ -487,7 +504,7 @@ app.addEventListener('click', (event) => {
   }
   if (action === 'merge') exportMergedPdf()
   if (action === 'open-split') {
-    document.querySelector('#page-range').value = `1-${state.pages.length}`
+    document.querySelector('#page-range').value = getDefaultSplitRange()
     splitDialog.showModal()
   }
   if (action === 'close-split') splitDialog.close()
