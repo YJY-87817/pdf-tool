@@ -1,5 +1,5 @@
 import './app.css'
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 import JSZip from 'jszip'
 import {
   Check,
@@ -154,7 +154,7 @@ let documentCounter = 0
 const SOURCE_COLOR_COUNT = 6
 
 function loadPdfRuntime() {
-  pdfRuntimePromise ??= Promise.all([import('pdf-lib'), import('pdfjs-dist')]).then(([pdfLib, pdfjs]) => {
+  pdfRuntimePromise ??= Promise.all([import('pdf-lib'), import('pdfjs-dist/legacy/build/pdf.mjs')]).then(([pdfLib, pdfjs]) => {
     pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
     return { PDFDocument: pdfLib.PDFDocument, degrees: pdfLib.degrees, pdfjs }
   })
