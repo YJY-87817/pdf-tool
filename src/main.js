@@ -47,12 +47,16 @@ app.innerHTML = `
   <header class="topbar">
     <a class="brand" href="#" aria-label="頁序 PDF 工作台首頁">
       <span class="brand-mark"><i data-lucide="file-stack"></i></span>
-      <span class="brand-name">頁序<span>PDF</span></span>
+      <span class="brand-name">頁序</span>
+      <span class="brand-tag">PDF</span>
     </a>
-    <div class="topbar-right">
-      <span class="privacy-badge"><i data-lucide="shield-check"></i>檔案只在此裝置處理</span>
-      <button class="button button-primary" type="button" data-action="add-files">
+    <span class="privacy-badge"><i data-lucide="shield-check"></i><span>檔案只在此裝置處理，不會上傳</span></span>
+    <div class="topbar-actions">
+      <button class="button button-quiet" type="button" data-action="add-files">
         <i data-lucide="plus"></i><span>加入 PDF</span>
+      </button>
+      <button class="button button-primary" type="button" data-action="merge" disabled>
+        <i data-lucide="combine"></i><span>合併並匯出</span>
       </button>
     </div>
   </header>
@@ -60,50 +64,32 @@ app.innerHTML = `
   <main class="workspace">
     <aside class="sidebar" aria-label="來源文件">
       <div class="sidebar-heading">
-        <div>
-          <p class="eyebrow">WORKSPACE</p>
-          <h1>文件來源</h1>
-        </div>
+        <h1>來源文件</h1>
         <span class="count-badge" id="file-count">0</span>
       </div>
-      <button class="add-source" type="button" data-action="add-files">
-        <i data-lucide="file-plus-2"></i><span>加入其他文件</span><kbd>PDF</kbd>
-      </button>
       <div id="file-list" class="file-list"></div>
-      <div class="sidebar-bottom">
-        <div class="local-note-icon"><i data-lucide="shield-check"></i></div>
-        <div><strong>你的檔案不會上傳</strong><p>所有編輯都在瀏覽器本機完成。</p></div>
-      </div>
+      <button class="add-source" type="button" data-action="add-files">
+        <i data-lucide="file-plus-2"></i><span>加入其他文件</span>
+      </button>
     </aside>
 
     <section class="editor" aria-label="PDF 頁面編輯器">
-      <div class="editor-heading">
-        <div>
-          <p class="eyebrow">PAGE EDITOR</p>
-          <h2>整理你的頁面</h2>
-        </div>
-        <div class="document-stats" id="document-stats">尚未加入文件</div>
-      </div>
-
       <div class="toolbar" role="toolbar" aria-label="頁面操作">
+        <div class="tool-group">
+          <button class="tool-button tool-select-all" type="button" data-action="select-all" disabled>
+            <span class="select-box" aria-hidden="true"><i data-lucide="check"></i></span><span>全選</span>
+          </button>
+          <span class="selection-summary" id="selection-summary">尚未選取頁面</span>
+        </div>
         <div class="tool-group">
           <button class="tool-button" type="button" data-action="rotate-selected" title="將所選頁面旋轉 90 度" disabled>
             <i data-lucide="rotate-cw"></i><span>旋轉</span>
           </button>
-          <button class="tool-button" type="button" data-action="delete-selected" title="刪除所選頁面" disabled>
-            <i data-lucide="trash-2"></i><span>刪除</span>
-          </button>
-          <span class="toolbar-divider"></span>
-          <button class="tool-button tool-select-all" type="button" data-action="select-all" disabled>
-            <i data-lucide="check"></i><span>全選</span>
-          </button>
-        </div>
-        <div class="tool-group tool-group-export">
-          <button class="button button-quiet" type="button" data-action="open-split" disabled>
+          <button class="tool-button" type="button" data-action="open-split" title="拆分或擷取頁面" disabled>
             <i data-lucide="scissors"></i><span>拆分</span>
           </button>
-          <button class="button button-export" type="button" data-action="merge" disabled>
-            <i data-lucide="combine"></i><span>合併並匯出</span>
+          <button class="tool-button tool-danger" type="button" data-action="delete-selected" title="刪除所選頁面" disabled>
+            <i data-lucide="trash-2"></i><span>刪除</span>
           </button>
         </div>
       </div>
@@ -113,22 +99,21 @@ app.innerHTML = `
           <div class="empty-art" aria-hidden="true">
             <span class="paper paper-back"></span><span class="paper paper-mid"></span>
             <span class="paper paper-front"><i data-lucide="file-stack"></i></span>
-            <span class="art-plus"><i data-lucide="plus"></i></span>
           </div>
-          <h3>把 PDF 放進工作區</h3>
-          <p>拖曳檔案到這裡，或從裝置挑選文件開始編輯。</p>
-          <button class="button button-primary" type="button" data-action="add-files">
+          <h2>把 PDF 拖曳到這裡</h2>
+          <p>合併多份文件、調整頁面順序、旋轉、刪除或拆分，全部在瀏覽器內完成。</p>
+          <button class="button button-primary button-large" type="button" data-action="add-files">
             <i data-lucide="upload"></i><span>選擇 PDF 檔案</span>
           </button>
-          <span class="file-hint">支援多個 PDF 檔案</span>
+          <span class="file-hint">可一次選擇多個檔案</span>
         </div>
         <div class="page-grid" id="page-grid" aria-live="polite"></div>
         <div class="drop-overlay" id="drop-overlay"><i data-lucide="upload"></i><strong>放開即可加入 PDF</strong></div>
       </div>
 
       <footer class="editor-footer">
-        <span id="selection-summary">尚未選取頁面</span>
-        <span class="reorder-hint"><i data-lucide="grip-vertical"></i>拖曳頁面即可重新排序</span>
+        <span id="document-stats">尚未加入文件</span>
+        <span class="reorder-hint"><i data-lucide="grip-vertical"></i>點選頁面以選取，拖曳即可重新排序</span>
       </footer>
     </section>
   </main>
@@ -136,14 +121,12 @@ app.innerHTML = `
   <input id="file-input" type="file" accept="application/pdf,.pdf" multiple hidden>
   <dialog class="split-dialog" id="split-dialog" aria-labelledby="split-title">
     <div class="dialog-heading">
-      <div class="dialog-icon"><i data-lucide="scissors"></i></div>
+      <h2 id="split-title">拆分 PDF</h2>
       <button class="icon-button" type="button" data-action="close-split" aria-label="關閉"><i data-lucide="x"></i></button>
     </div>
-    <h2 id="split-title">拆分 PDF</h2>
-    <p class="dialog-copy">指定要處理的頁碼，或將範圍內的每一頁各自拆成 PDF。</p>
     <label class="field-label" for="page-range">頁碼範圍</label>
     <input class="range-input" id="page-range" type="text" autocomplete="off" spellcheck="false">
-    <p class="field-help">例如：1-3, 5。頁碼依目前工作區順序。</p>
+    <p class="field-help" id="page-range-help">例如：1-3, 5。頁碼依目前工作區順序。</p>
     <fieldset class="split-options">
       <legend>輸出方式</legend>
       <label class="option-row"><input type="radio" name="split-mode" value="extract" checked><span><strong>擷取為一份 PDF</strong><small>將指定頁面合併成單一檔案</small></span></label>
@@ -167,6 +150,8 @@ const splitDialog = document.querySelector('#split-dialog')
 const toast = document.querySelector('#toast')
 let toastTimer
 let pdfRuntimePromise
+let documentCounter = 0
+const SOURCE_COLOR_COUNT = 6
 
 function loadPdfRuntime() {
   pdfRuntimePromise ??= Promise.all([import('pdf-lib'), import('pdfjs-dist')]).then(([pdfLib, pdfjs]) => {
@@ -223,11 +208,11 @@ function renderFiles() {
   }
 
   fileList.innerHTML = state.documents.map((document) => `
-    <article class="source-file">
+    <article class="source-file source-${document.colorIndex}">
       <span class="source-icon"><i data-lucide="files"></i></span>
       <div class="source-details">
         <strong title="${escapeHtml(document.name)}">${escapeHtml(document.name)}</strong>
-        <span>${document.pageCount} 頁 <span class="source-dot">·</span> ${formatBytes(document.bytes.byteLength)}</span>
+        <span>${document.pageCount} 頁 · ${formatBytes(document.bytes.byteLength)}</span>
       </div>
       <button class="icon-button source-remove" type="button" data-action="remove-document" data-document-id="${document.id}" aria-label="移除 ${escapeHtml(document.name)}" title="移除文件">
         <i data-lucide="x"></i>
@@ -251,7 +236,7 @@ function renderPages() {
     const source = state.documents.find((document) => document.id === page.documentId)
     const isSelected = state.selectedPages.has(page.id)
     return `
-      <article class="page-card${isSelected ? ' is-selected' : ''}" draggable="true" data-page-id="${page.id}" aria-label="第 ${index + 1} 頁，來源：${escapeHtml(source.name)}">
+      <article class="page-card source-${source.colorIndex}${isSelected ? ' is-selected' : ''}" draggable="true" data-page-id="${page.id}" aria-label="第 ${index + 1} 頁，來源：${escapeHtml(source.name)}">
         <div class="page-preview">
           <div class="preview-loading"><span></span></div>
           <canvas class="page-canvas" aria-label="第 ${index + 1} 頁預覽"></canvas>
@@ -261,7 +246,7 @@ function renderPages() {
           <span class="page-number">${String(index + 1).padStart(2, '0')}</span>
           <span class="page-grip" aria-hidden="true"><i data-lucide="grip-vertical"></i></span>
         </div>
-        <div class="page-caption"><span>第 ${index + 1} 頁</span><span title="${escapeHtml(source.name)}">${escapeHtml(source.name)}</span></div>
+        <div class="page-caption"><span class="source-dot" aria-hidden="true"></span><span title="${escapeHtml(source.name)}">${escapeHtml(source.name)}</span><span>p.${page.sourceIndex + 1}</span></div>
       </article>
     `
   }).join('')
@@ -297,16 +282,18 @@ function renderStatus() {
   const selectedCount = state.selectedPages.size
   const allSelected = state.pages.length > 0 && selectedCount === state.pages.length
   document.querySelector('#document-stats').textContent = state.pages.length
-    ? `${state.pages.length} 頁 · ${state.documents.length} 份文件`
+    ? `共 ${state.pages.length} 頁，來自 ${state.documents.length} 份文件`
     : '尚未加入文件'
   document.querySelector('#selection-summary').textContent = selectedCount
     ? `已選取 ${selectedCount} / ${state.pages.length} 頁`
-    : state.pages.length ? `共 ${state.pages.length} 頁` : '尚未選取頁面'
+    : state.pages.length ? '點選頁面以選取' : '尚未加入頁面'
   document.querySelector('[data-action="rotate-selected"]').disabled = selectedCount === 0 || state.busy
   document.querySelector('[data-action="delete-selected"]').disabled = selectedCount === 0 || state.busy
   const selectAllButton = document.querySelector('[data-action="select-all"]')
   selectAllButton.disabled = state.pages.length === 0 || state.busy
-  selectAllButton.querySelector('span').textContent = allSelected ? '取消全選' : '全選'
+  selectAllButton.classList.toggle('is-all', allSelected)
+  selectAllButton.classList.toggle('is-partial', selectedCount > 0 && !allSelected)
+  selectAllButton.querySelector('span:last-child').textContent = allSelected ? '取消全選' : '全選'
   document.querySelector('[data-action="merge"]').disabled = state.pages.length === 0 || state.busy
   document.querySelector('[data-action="open-split"]').disabled = state.pages.length === 0 || state.busy
 }
@@ -333,7 +320,8 @@ async function addFiles(fileCollection) {
         PDFDocument.load(bytes, { ignoreEncryption: true }),
       ])
       const documentId = createId()
-      const document = { id: documentId, name: file.name, bytes, pageCount: pdfJs.numPages, pdfJs, pdfLib }
+      const colorIndex = documentCounter++ % SOURCE_COLOR_COUNT
+      const document = { id: documentId, colorIndex, name: file.name, bytes, pageCount: pdfJs.numPages, pdfJs, pdfLib }
       state.documents.push(document)
       for (let sourceIndex = 0; sourceIndex < document.pageCount; sourceIndex += 1) {
         state.pages.push({ id: createId(), documentId, sourceIndex, rotation: 0 })
@@ -505,6 +493,9 @@ app.addEventListener('click', (event) => {
   if (action === 'merge') exportMergedPdf()
   if (action === 'open-split') {
     document.querySelector('#page-range').value = getDefaultSplitRange()
+    document.querySelector('#page-range-help').textContent = state.selectedPages.size
+      ? `已帶入勾選的 ${state.selectedPages.size} 頁，可直接修改。頁碼依目前工作區順序。`
+      : '例如：1-3, 5。頁碼依目前工作區順序。'
     splitDialog.showModal()
   }
   if (action === 'close-split') splitDialog.close()
