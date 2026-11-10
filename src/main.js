@@ -113,7 +113,7 @@ app.innerHTML = `
 
       <footer class="editor-footer">
         <span id="document-stats">尚未加入文件</span>
-        <span class="reorder-hint"><i data-lucide="grip-vertical"></i>點選頁面以選取，拖曳即可重新排序</span>
+        <span class="reorder-hint"><i data-lucide="grip-vertical"></i>點選頁面以選取，拖曳即可重新排序（鍵盤：Alt + ←/→）</span>
       </footer>
     </section>
   </main>
@@ -364,6 +364,7 @@ async function addFiles(fileCollection) {
     return
   }
 
+  let addedCount = 0
   for (const file of pdfFiles) {
     try {
       const bytes = await file.arrayBuffer()
@@ -385,6 +386,7 @@ async function addFiles(fileCollection) {
       for (let sourceIndex = 0; sourceIndex < document.pageCount; sourceIndex += 1) {
         state.pages.push({ id: createId(), documentId, sourceIndex, rotation: 0 })
       }
+      addedCount += 1
       renderAll()
     } catch (error) {
       showToast(`無法讀取「${file.name}」，請確認檔案未加密且格式正確。`, true)
@@ -392,7 +394,9 @@ async function addFiles(fileCollection) {
     }
   }
 
-  if (pdfFiles.length > 0 && state.pages.length > 0) showToast(`已加入 ${pdfFiles.length} 個 PDF。`)
+  if (addedCount > 0) {
+    showToast(addedCount === pdfFiles.length ? `已加入 ${addedCount} 個 PDF。` : `已加入 ${addedCount} 個 PDF，${pdfFiles.length - addedCount} 個失敗。`)
+  }
 }
 
 function togglePage(pageId) {
@@ -402,7 +406,8 @@ function togglePage(pageId) {
   const check = card?.querySelector('.page-check')
   card?.classList.toggle('is-selected', state.selectedPages.has(pageId))
   check?.setAttribute('aria-pressed', String(state.selectedPages.has(pageId)))
-  check?.setAttribute('aria-label', `${state.selectedPages.has(pageId) ? '取消選取' : '選取'}頁面`)
+  const pageNumber = state.pages.findIndex((page) => page.id === pageId) + 1
+  check?.setAttribute('aria-label', `${state.selectedPages.has(pageId) ? '取消選取' : '選取'}第 ${pageNumber} 頁`)
   renderStatus()
 }
 
@@ -577,6 +582,13 @@ app.addEventListener('click', (event) => {
   if (action === 'confirm-split') splitPdf()
 })
 
+document.querySelector('#page-range').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && !state.busy) {
+    event.preventDefault()
+    splitPdf()
+  }
+})
+
 fileInput.addEventListener('change', async () => {
   await addFiles(fileInput.files)
   fileInput.value = ''
@@ -609,15 +621,36 @@ pageGrid.addEventListener('drop', (event) => {
   const target = event.target.closest('.page-card')
   if (!target || !state.draggedPageId || target.dataset.pageId === state.draggedPageId) return
   event.preventDefault()
-  const fromIndex = state.pages.findIndex((page) => page.id === state.draggedPageId)
-  let toIndex = state.pages.findIndex((page) => page.id === target.dataset.pageId)
   const bounds = target.getBoundingClientRect()
-  if (event.clientX > bounds.left + bounds.width / 2) toIndex += 1
-  if (fromIndex < toIndex) toIndex -= 1
-  const [movedPage] = state.pages.splice(fromIndex, 1)
-  state.pages.splice(toIndex, 0, movedPage)
+  movePages(state.draggedPageId, target.dataset.pageId, event.clientX > bounds.left + bounds.width / 2)
+})
+
+// 拖曳已選取的頁面時，會一併移動所有已選取的頁面。
+function movePages(draggedId, targetId, placeAfter) {
+  const movingIds = state.selectedPages.has(draggedId) ? new Set(state.selectedPages) : new Set([draggedId])
+  if (movingIds.has(targetId)) return
+  const moving = state.pages.filter((page) => movingIds.has(page.id))
+  const rest = state.pages.filter((page) => !movingIds.has(page.id))
+  rest.splice(rest.findIndex((page) => page.id === targetId) + (placeAfter ? 1 : 0), 0, ...moving)
+  state.pages = rest
   renderPages()
   renderStatus()
+}
+
+// 鍵盤替代方案：在頁面的選取按鈕上按 Alt + 左右方向鍵，移動該頁。
+pageGrid.addEventListener('keydown', (event) => {
+  const check = event.target.closest('.page-check')
+  if (!check || !event.altKey || state.busy || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return
+  event.preventDefault()
+  const pageId = check.dataset.pageId
+  const index = state.pages.findIndex((page) => page.id === pageId)
+  const neighbor = index + (event.key === 'ArrowRight' ? 1 : -1)
+  if (neighbor < 0 || neighbor >= state.pages.length) return
+  ;[state.pages[index], state.pages[neighbor]] = [state.pages[neighbor], state.pages[index]]
+  renderPages()
+  renderStatus()
+  pageGrid.querySelector(`.page-check[data-page-id="${pageId}"]`)?.focus()
+  showToast(`已移到第 ${neighbor + 1} 頁。`)
 })
 
 window.addEventListener('dragover', (event) => {
