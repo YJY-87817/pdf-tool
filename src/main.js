@@ -157,6 +157,9 @@ function loadPdfRuntime() {
   pdfRuntimePromise ??= Promise.all([import('pdf-lib'), import('pdfjs-dist/legacy/build/pdf.mjs')]).then(([pdfLib, pdfjs]) => {
     pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
     return { PDFDocument: pdfLib.PDFDocument, degrees: pdfLib.degrees, pdfjs }
+  }).catch((error) => {
+    pdfRuntimePromise = undefined
+    throw error
   })
   return pdfRuntimePromise
 }
@@ -194,8 +197,10 @@ function showToast(message, isError = false) {
 
 function setBusy(busy, message = '') {
   state.busy = busy
-  document.querySelectorAll('[data-action="merge"], [data-action="open-split"], [data-action="confirm-split"]').forEach((button) => {
-    button.disabled = busy || state.pages.length === 0
+  renderStatus()
+  document.querySelector('[data-action="confirm-split"]').disabled = busy
+  document.querySelectorAll('.source-remove').forEach((button) => {
+    button.disabled = busy
   })
   if (message) document.querySelector('#selection-summary').textContent = message
 }
@@ -212,7 +217,7 @@ function renderFiles() {
       <span class="source-icon"><i data-lucide="files"></i></span>
       <div class="source-details">
         <strong title="${escapeHtml(document.name)}">${escapeHtml(document.name)}</strong>
-        <span>${document.pageCount} 頁 · ${formatBytes(document.bytes.byteLength)}</span>
+        <span>${document.pageCount} 頁 · ${formatBytes(document.size)}</span>
       </div>
       <button class="icon-button source-remove" type="button" data-action="remove-document" data-document-id="${document.id}" aria-label="移除 ${escapeHtml(document.name)}" title="移除文件">
         <i data-lucide="x"></i>
@@ -252,30 +257,78 @@ function renderPages() {
   }).join('')
 
   refreshIcons()
-  state.pages.forEach((page) => renderThumbnail(page))
+  pruneThumbnails()
+  thumbObserver.disconnect()
+  pageGrid.querySelectorAll('.page-card').forEach((card) => {
+    const cached = thumbCache.get(thumbKey(state.pages.find((page) => page.id === card.dataset.pageId)))
+    if (cached) drawThumbnail(card, cached)
+    else thumbObserver.observe(card)
+  })
 }
 
-async function renderThumbnail(page) {
-  const card = pageGrid.querySelector(`[data-page-id="${page.id}"]`)
-  if (!card) return
-
-  const canvas = card.querySelector('canvas')
-  const loading = card.querySelector('.preview-loading')
-  const source = state.documents.find((document) => document.id === page.documentId)
-
-  try {
-    const pdfPage = await source.pdfJs.getPage(page.sourceIndex + 1)
-    const baseViewport = pdfPage.getViewport({ scale: 1 })
-    const scale = Math.min(1, 228 / baseViewport.width)
-    const viewport = pdfPage.getViewport({ scale, rotation: page.rotation })
-    const context = canvas.getContext('2d', { alpha: false })
-    canvas.width = Math.ceil(viewport.width)
-    canvas.height = Math.ceil(viewport.height)
-    await pdfPage.render({ canvasContext: context, viewport }).promise
-    loading.hidden = true
-  } catch {
-    loading.innerHTML = '<span class="preview-error">無法預覽</span>'
+const thumbCache = new Map()
+const thumbJobs = new Map()
+const thumbObserver = new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue
+    thumbObserver.unobserve(entry.target)
+    renderThumbnail(entry.target.dataset.pageId)
   }
+}, { rootMargin: '600px 0px' })
+
+function thumbKey(page) {
+  return `${page.id}:${page.rotation}`
+}
+
+function getThumbnail(page) {
+  const key = thumbKey(page)
+  if (thumbCache.has(key)) return Promise.resolve(thumbCache.get(key))
+  if (!thumbJobs.has(key)) {
+    const source = state.documents.find((document) => document.id === page.documentId)
+    const job = (async () => {
+      const pdfPage = await source.pdfJs.getPage(page.sourceIndex + 1)
+      const baseViewport = pdfPage.getViewport({ scale: 1 })
+      const scale = Math.min(1, 228 / baseViewport.width)
+      // getViewport 的 rotation 會取代頁面本身的 /Rotate，所以要疊加。
+      const viewport = pdfPage.getViewport({ scale, rotation: (pdfPage.rotate + page.rotation) % 360 })
+      const offscreen = document.createElement('canvas')
+      offscreen.width = Math.ceil(viewport.width)
+      offscreen.height = Math.ceil(viewport.height)
+      await pdfPage.render({ canvasContext: offscreen.getContext('2d', { alpha: false }), viewport }).promise
+      thumbCache.set(key, offscreen)
+      return offscreen
+    })().finally(() => thumbJobs.delete(key))
+    thumbJobs.set(key, job)
+  }
+  return thumbJobs.get(key)
+}
+
+function drawThumbnail(card, thumbnail) {
+  const canvas = card.querySelector('canvas')
+  canvas.width = thumbnail.width
+  canvas.height = thumbnail.height
+  canvas.getContext('2d', { alpha: false }).drawImage(thumbnail, 0, 0)
+  card.querySelector('.preview-loading').hidden = true
+}
+
+async function renderThumbnail(pageId) {
+  const page = state.pages.find((candidate) => candidate.id === pageId)
+  if (!page) return
+  try {
+    const thumbnail = await getThumbnail(page)
+    const card = pageGrid.querySelector(`[data-page-id="${pageId}"]`)
+    const current = state.pages.find((candidate) => candidate.id === pageId)
+    if (card && current && thumbKey(current) === thumbKey(page)) drawThumbnail(card, thumbnail)
+  } catch {
+    const card = pageGrid.querySelector(`[data-page-id="${pageId}"]`)
+    const loading = card?.querySelector('.preview-loading')
+    if (loading) loading.innerHTML = '<span class="preview-error">無法預覽</span>'
+  }
+}
+
+function pruneThumbnails() {
+  const liveKeys = new Set(state.pages.map(thumbKey))
+  for (const key of thumbCache.keys()) if (!liveKeys.has(key)) thumbCache.delete(key)
 }
 
 function renderStatus() {
@@ -315,13 +368,19 @@ async function addFiles(fileCollection) {
     try {
       const bytes = await file.arrayBuffer()
       const { PDFDocument, pdfjs } = await loadPdfRuntime()
-      const [pdfJs, pdfLib] = await Promise.all([
-        pdfjs.getDocument({ data: new Uint8Array(bytes.slice(0)) }).promise,
-        PDFDocument.load(bytes, { ignoreEncryption: true }),
-      ])
+      const loadingTask = pdfjs.getDocument({ data: new Uint8Array(bytes.slice(0)) })
+      let pdfJs
+      let pdfLib
+      try {
+        // 不使用 ignoreEncryption：加密檔案必須被拒絕，否則匯出的頁面內容會損毀。
+        ;[pdfJs, pdfLib] = await Promise.all([loadingTask.promise, PDFDocument.load(bytes)])
+      } catch (loadError) {
+        loadingTask.destroy()
+        throw loadError
+      }
       const documentId = createId()
       const colorIndex = documentCounter++ % SOURCE_COLOR_COUNT
-      const document = { id: documentId, colorIndex, name: file.name, bytes, pageCount: pdfJs.numPages, pdfJs, pdfLib }
+      const document = { id: documentId, colorIndex, name: file.name, size: bytes.byteLength, pageCount: pdfJs.numPages, pdfJs, pdfLib }
       state.documents.push(document)
       for (let sourceIndex = 0; sourceIndex < document.pageCount; sourceIndex += 1) {
         state.pages.push({ id: createId(), documentId, sourceIndex, rotation: 0 })
@@ -348,6 +407,8 @@ function togglePage(pageId) {
 }
 
 function removeDocument(documentId) {
+  if (state.busy) return
+  state.documents.find((document) => document.id === documentId)?.pdfJs.destroy()
   state.documents = state.documents.filter((document) => document.id !== documentId)
   state.pages = state.pages.filter((page) => page.documentId !== documentId)
   state.selectedPages = new Set([...state.selectedPages].filter((pageId) => state.pages.some((page) => page.id === pageId)))
@@ -390,9 +451,22 @@ function getDefaultSplitRange() {
 async function createPdf(pages) {
   const { PDFDocument, degrees } = await loadPdfRuntime()
   const output = await PDFDocument.create()
+  // 每份來源文件只呼叫一次 copyPages，共用的字型、圖片才不會被每頁重複複製。
+  const indexesByDocument = new Map()
   for (const page of pages) {
-    const source = state.documents.find((document) => document.id === page.documentId)
-    const [copiedPage] = await output.copyPages(source.pdfLib, [page.sourceIndex])
+    if (!indexesByDocument.has(page.documentId)) indexesByDocument.set(page.documentId, new Set())
+    indexesByDocument.get(page.documentId).add(page.sourceIndex)
+  }
+  const copiedPages = new Map()
+  for (const [documentId, indexSet] of indexesByDocument) {
+    const source = state.documents.find((document) => document.id === documentId)
+    if (!source) throw new Error('來源文件已被移除。')
+    const indexes = [...indexSet]
+    const copied = await output.copyPages(source.pdfLib, indexes)
+    indexes.forEach((sourceIndex, position) => copiedPages.set(`${documentId}:${sourceIndex}`, copied[position]))
+  }
+  for (const page of pages) {
+    const copiedPage = copiedPages.get(`${page.documentId}:${page.sourceIndex}`)
     const rotation = ((copiedPage.getRotation().angle + page.rotation) % 360 + 360) % 360
     copiedPage.setRotation(degrees(rotation))
     output.addPage(copiedPage)
@@ -473,6 +547,7 @@ app.addEventListener('click', (event) => {
   if (action === 'add-files') fileInput.click()
   if (action === 'toggle-page') togglePage(pageId)
   if (action === 'remove-document') removeDocument(documentId)
+  if (state.busy && ['rotate-selected', 'delete-selected', 'select-all', 'open-split'].includes(action)) return
   if (action === 'rotate-selected') {
     state.pages.forEach((page) => {
       if (state.selectedPages.has(page.id)) page.rotation = (page.rotation + 90) % 360
@@ -530,6 +605,7 @@ pageGrid.addEventListener('dragover', (event) => {
 })
 
 pageGrid.addEventListener('drop', (event) => {
+  if (state.busy) return
   const target = event.target.closest('.page-card')
   if (!target || !state.draggedPageId || target.dataset.pageId === state.draggedPageId) return
   event.preventDefault()
