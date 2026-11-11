@@ -1,6 +1,9 @@
 import './app.css'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 import JSZip from 'jszip'
+import { formatBytes } from './lib/format.js'
+import { PageRangeError, formatPageRange, parsePageRange } from './lib/page-range.js'
+import { reorderPages } from './lib/reorder.js'
 import {
   Check,
   Combine,
@@ -178,11 +181,6 @@ function escapeHtml(value) {
   })[character])
 }
 
-function formatBytes(bytes) {
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
 function refreshIcons() {
   createIcons({ icons: iconSet, attrs: { 'stroke-width': 1.8 } })
 }
@@ -192,7 +190,7 @@ function showToast(message, isError = false, duration = 3200) {
   toast.classList.toggle('toast-error', isError)
   toast.classList.add('toast-visible')
   clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => toast.classList.remove('toast-visible'), 3200)
+  toastTimer = setTimeout(() => toast.classList.remove('toast-visible'), duration)
 }
 
 function setBusy(busy, message = '') {
@@ -212,14 +210,14 @@ function renderFiles() {
     return
   }
 
-  fileList.innerHTML = state.documents.map((document) => `
-    <article class="source-file source-${document.colorIndex}">
+  fileList.innerHTML = state.documents.map((sourceDoc) => `
+    <article class="source-file source-${sourceDoc.colorIndex}">
       <span class="source-icon"><i data-lucide="files"></i></span>
       <div class="source-details">
-        <strong title="${escapeHtml(document.name)}">${escapeHtml(document.name)}</strong>
-        <span>${document.pageCount} 頁 · ${formatBytes(document.size)}</span>
+        <strong title="${escapeHtml(sourceDoc.name)}">${escapeHtml(sourceDoc.name)}</strong>
+        <span>${sourceDoc.pageCount} 頁 · ${formatBytes(sourceDoc.size)}</span>
       </div>
-      <button class="icon-button source-remove" type="button" data-action="remove-document" data-document-id="${document.id}" aria-label="移除 ${escapeHtml(document.name)}" title="移除文件">
+      <button class="icon-button source-remove" type="button" data-action="remove-document" data-document-id="${sourceDoc.id}" aria-label="移除 ${escapeHtml(sourceDoc.name)}" title="移除文件">
         <i data-lucide="x"></i>
       </button>
     </article>
@@ -238,7 +236,7 @@ function renderPages() {
   }
 
   pageGrid.innerHTML = state.pages.map((page, index) => {
-    const source = state.documents.find((document) => document.id === page.documentId)
+    const source = state.documents.find((sourceDoc) => sourceDoc.id === page.documentId)
     const isSelected = state.selectedPages.has(page.id)
     return `
       <article class="page-card source-${source.colorIndex}${isSelected ? ' is-selected' : ''}" draggable="true" data-page-id="${page.id}" aria-label="第 ${index + 1} 頁，來源：${escapeHtml(source.name)}">
@@ -284,17 +282,17 @@ function getThumbnail(page) {
   const key = thumbKey(page)
   if (thumbCache.has(key)) return Promise.resolve(thumbCache.get(key))
   if (!thumbJobs.has(key)) {
-    const source = state.documents.find((document) => document.id === page.documentId)
+    const source = state.documents.find((sourceDoc) => sourceDoc.id === page.documentId)
     const job = (async () => {
       const pdfPage = await source.pdfJs.getPage(page.sourceIndex + 1)
       const baseViewport = pdfPage.getViewport({ scale: 1 })
       const scale = Math.min(1, 228 / baseViewport.width)
       // getViewport 的 rotation 會取代頁面本身的 /Rotate，所以要疊加。
-      const viewport = pdfPage.getViewport({ scale, rotation: (pdfPage.rotate + page.rotation) % 360 })
+      const pageViewport = pdfPage.getViewport({ scale, rotation: (pdfPage.rotate + page.rotation) % 360 })
       const offscreen = document.createElement('canvas')
-      offscreen.width = Math.ceil(viewport.width)
-      offscreen.height = Math.ceil(viewport.height)
-      await pdfPage.render({ canvasContext: offscreen.getContext('2d', { alpha: false }), viewport }).promise
+      offscreen.width = Math.ceil(pageViewport.width)
+      offscreen.height = Math.ceil(pageViewport.height)
+      await pdfPage.render({ canvasContext: offscreen.getContext('2d', { alpha: false }), viewport: pageViewport }).promise
       thumbCache.set(key, offscreen)
       return offscreen
     })().finally(() => thumbJobs.delete(key))
@@ -438,34 +436,6 @@ function removeDocument(documentId) {
   renderAll()
 }
 
-class PageRangeError extends Error {}
-
-function parsePageRange(value) {
-  const indexes = new Set()
-  for (const part of value.split(',')) {
-    const trimmed = part.trim()
-    const match = trimmed.match(/^(\d+)(?:\s*-\s*(\d+))?$/)
-    if (!match) throw new PageRangeError('頁碼格式錯誤，請使用例如 1-3, 5 的格式。')
-    const start = Number(match[1])
-    const end = Number(match[2] ?? match[1])
-    if (start < 1 || end < start || end > state.pages.length) {
-      throw new PageRangeError(`頁碼範圍需介於 1 到 ${state.pages.length} 頁。`)
-    }
-    for (let pageNumber = start; pageNumber <= end; pageNumber += 1) indexes.add(pageNumber - 1)
-  }
-  return [...indexes].sort((left, right) => left - right).map((index) => state.pages[index])
-}
-
-function formatPageRange(pageNumbers) {
-  const ranges = []
-  for (const pageNumber of pageNumbers) {
-    const last = ranges.at(-1)
-    if (last && pageNumber === last[1] + 1) last[1] = pageNumber
-    else ranges.push([pageNumber, pageNumber])
-  }
-  return ranges.map(([start, end]) => (start === end ? `${start}` : `${start}-${end}`)).join(', ')
-}
-
 function getDefaultSplitRange() {
   const selectedNumbers = state.pages
     .map((page, index) => (state.selectedPages.has(page.id) ? index + 1 : null))
@@ -484,7 +454,7 @@ async function createPdf(pages) {
   }
   const copiedPages = new Map()
   for (const [documentId, indexSet] of indexesByDocument) {
-    const source = state.documents.find((document) => document.id === documentId)
+    const source = state.documents.find((sourceDoc) => sourceDoc.id === documentId)
     if (!source) throw new Error('來源文件已被移除。')
     const indexes = [...indexSet]
     const copied = await output.copyPages(source.pdfLib, indexes)
@@ -527,7 +497,7 @@ async function exportMergedPdf() {
 
 async function splitPdf() {
   try {
-    const pages = parsePageRange(document.querySelector('#page-range').value)
+    const pages = parsePageRange(document.querySelector('#page-range').value, state.pages.length).map((index) => state.pages[index])
     if (pages.length === 0) throw new PageRangeError('請至少指定一頁。')
     const mode = document.querySelector('input[name="split-mode"]:checked').value
     setBusy(true, '正在拆分 PDF…')
@@ -536,7 +506,7 @@ async function splitPdf() {
       const zip = new JSZip()
       for (let index = 0; index < pages.length; index += 1) {
         const page = pages[index]
-        const source = state.documents.find((document) => document.id === page.documentId)
+        const source = state.documents.find((sourceDoc) => sourceDoc.id === page.documentId)
         const sourceName = source?.name.replace(/\.pdf$/i, '') ?? 'page'
         const bytes = await createPdf([page])
         zip.file(`${sourceName}-${String(index + 1).padStart(3, '0')}.pdf`, bytes)
@@ -653,12 +623,9 @@ pageGrid.addEventListener('drop', (event) => {
 
 // 拖曳已選取的頁面時，會一併移動所有已選取的頁面。
 function movePages(draggedId, targetId, placeAfter) {
-  const movingIds = state.selectedPages.has(draggedId) ? new Set(state.selectedPages) : new Set([draggedId])
-  if (movingIds.has(targetId)) return
-  const moving = state.pages.filter((page) => movingIds.has(page.id))
-  const rest = state.pages.filter((page) => !movingIds.has(page.id))
-  rest.splice(rest.findIndex((page) => page.id === targetId) + (placeAfter ? 1 : 0), 0, ...moving)
-  state.pages = rest
+  const reordered = reorderPages(state.pages, state.selectedPages, draggedId, targetId, placeAfter)
+  if (!reordered) return
+  state.pages = reordered
   renderPages()
   renderStatus()
 }
