@@ -198,7 +198,8 @@ button { color: inherit; }
 
 /* Page grid */
 .page-grid { flex: 1; display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); align-content: start; gap: 24px 20px; padding: 8px 4px 24px; }
-.page-card { min-width: 0; cursor: pointer; animation: arrive 240ms ease both; }
+.page-card { min-width: 0; cursor: pointer; }
+.page-card.is-new { animation: arrive 240ms ease both; }
 .page-card.is-dragging { opacity: 0.35; cursor: grabbing; }
 .page-preview { position: relative; aspect-ratio: 3 / 4; display: grid; place-items: center; overflow: hidden; padding: 10px; border-radius: 8px; background: var(--surface-2); outline: 2px solid transparent; outline-offset: 3px; transition: outline-color 120ms ease, background 120ms ease; }
 .page-card:hover .page-preview { background: var(--surface-hover); }

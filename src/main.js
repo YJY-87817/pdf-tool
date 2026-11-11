@@ -55,7 +55,7 @@ app.innerHTML = `
     </a>
     <span class="privacy-badge"><i data-lucide="shield-check"></i><span>檔案只在此裝置處理，不會上傳</span></span>
     <div class="topbar-actions">
-      <button class="button button-quiet" type="button" data-action="add-files">
+      <button class="button button-quiet" type="button" data-action="add-files" aria-label="加入 PDF">
         <i data-lucide="plus"></i><span>加入 PDF</span>
       </button>
       <button class="button button-primary" type="button" data-action="merge" disabled>
@@ -85,13 +85,13 @@ app.innerHTML = `
           <span class="selection-summary" id="selection-summary">尚未選取頁面</span>
         </div>
         <div class="tool-group">
-          <button class="tool-button" type="button" data-action="rotate-selected" title="將所選頁面旋轉 90 度" disabled>
+          <button class="tool-button" type="button" data-action="rotate-selected" title="將所選頁面旋轉 90 度" aria-label="旋轉所選頁面" disabled>
             <i data-lucide="rotate-cw"></i><span>旋轉</span>
           </button>
-          <button class="tool-button" type="button" data-action="open-split" title="拆分或擷取頁面" disabled>
+          <button class="tool-button" type="button" data-action="open-split" title="拆分或擷取頁面" aria-label="拆分或擷取頁面" disabled>
             <i data-lucide="scissors"></i><span>拆分</span>
           </button>
-          <button class="tool-button tool-danger" type="button" data-action="delete-selected" title="刪除所選頁面" disabled>
+          <button class="tool-button tool-danger" type="button" data-action="delete-selected" title="刪除所選頁面" aria-label="刪除所選頁面" disabled>
             <i data-lucide="trash-2"></i><span>刪除</span>
           </button>
         </div>
@@ -110,7 +110,7 @@ app.innerHTML = `
           </button>
           <span class="file-hint">可一次選擇多個檔案</span>
         </div>
-        <div class="page-grid" id="page-grid" aria-live="polite"></div>
+        <div class="page-grid" id="page-grid"></div>
         <div class="drop-overlay" id="drop-overlay"><i data-lucide="upload"></i><strong>放開即可加入 PDF</strong></div>
       </div>
 
@@ -225,108 +225,175 @@ function renderFiles() {
   refreshIcons()
 }
 
+// ---- 頁面格線：以 page.id 為 key 的局部更新 ----
+// 卡片節點在整個生命週期內保持不變，只更新會變的部分（頁碼、選取狀態、旋轉後的縮圖），
+// 所以旋轉、排序、全選都不會重建 DOM，也不會重播進場動畫。
+const cards = new Map()
+
+function createCard(page) {
+  const source = state.documents.find((sourceDoc) => sourceDoc.id === page.documentId)
+  const card = document.createElement('article')
+  card.className = `page-card is-new source-${source.colorIndex}`
+  card.draggable = true
+  card.dataset.pageId = page.id
+  card.innerHTML = `
+    <div class="page-preview">
+      <div class="preview-loading"><span></span></div>
+      <canvas class="page-canvas" role="img"></canvas>
+      <button class="page-check" type="button" data-action="toggle-page" data-page-id="${page.id}" aria-pressed="false">
+        <i data-lucide="check"></i>
+      </button>
+      <span class="page-number"></span>
+      <span class="page-grip" aria-hidden="true"><i data-lucide="grip-vertical"></i></span>
+    </div>
+    <div class="page-caption"><span class="source-dot" aria-hidden="true"></span><span title="${escapeHtml(source.name)}">${escapeHtml(source.name)}</span><span>p.${page.sourceIndex + 1}</span></div>
+  `
+  card.addEventListener('animationend', () => card.classList.remove('is-new'), { once: true })
+  const canvas = card.querySelector('canvas')
+  canvas.width = 0 // 預設 300×150 的畫布；未繪製前不佔用像素
+  canvas.height = 0
+  return card
+}
+
+function updateCard(card, page, index) {
+  const source = state.documents.find((sourceDoc) => sourceDoc.id === page.documentId)
+  const isSelected = state.selectedPages.has(page.id)
+  const number = index + 1
+  const label = `第 ${number} 頁，來源：${source.name}`
+  if (card.getAttribute('aria-label') !== label) card.setAttribute('aria-label', label)
+  card.classList.toggle('is-selected', isSelected)
+  const check = card.querySelector('.page-check')
+  check.setAttribute('aria-pressed', String(isSelected))
+  check.setAttribute('aria-label', `${isSelected ? '取消選取' : '選取'}第 ${number} 頁`)
+  const numberText = String(number).padStart(2, '0')
+  const numberEl = card.querySelector('.page-number')
+  if (numberEl.textContent !== numberText) numberEl.textContent = numberText
+  card.querySelector('canvas').setAttribute('aria-label', `第 ${number} 頁預覽`)
+  // 旋轉角度改變：舊縮圖保留到新縮圖畫好為止；重新觀察以觸發重畫。
+  if (card.dataset.wantedKey !== thumbKey(page)) {
+    card.dataset.wantedKey = thumbKey(page)
+    thumbObserver.unobserve(card)
+    thumbObserver.observe(card)
+  }
+}
+
 function renderPages() {
   const hasPages = state.pages.length > 0
   emptyState.hidden = hasPages
   pageGrid.hidden = !hasPages
 
-  if (!hasPages) {
-    pageGrid.innerHTML = ''
-    return
+  const live = new Set(state.pages.map((page) => page.id))
+  for (const [pageId, card] of cards) {
+    if (live.has(pageId)) continue
+    thumbObserver.unobserve(card)
+    pendingThumbs.delete(pageId)
+    card.remove()
+    cards.delete(pageId)
   }
 
-  pageGrid.innerHTML = state.pages.map((page, index) => {
-    const source = state.documents.find((sourceDoc) => sourceDoc.id === page.documentId)
-    const isSelected = state.selectedPages.has(page.id)
-    return `
-      <article class="page-card source-${source.colorIndex}${isSelected ? ' is-selected' : ''}" draggable="true" data-page-id="${page.id}" aria-label="第 ${index + 1} 頁，來源：${escapeHtml(source.name)}">
-        <div class="page-preview">
-          <div class="preview-loading"><span></span></div>
-          <canvas class="page-canvas" aria-label="第 ${index + 1} 頁預覽"></canvas>
-          <button class="page-check" type="button" data-action="toggle-page" data-page-id="${page.id}" aria-label="${isSelected ? '取消選取' : '選取'}第 ${index + 1} 頁" aria-pressed="${isSelected}">
-            <i data-lucide="check"></i>
-          </button>
-          <span class="page-number">${String(index + 1).padStart(2, '0')}</span>
-          <span class="page-grip" aria-hidden="true"><i data-lucide="grip-vertical"></i></span>
-        </div>
-        <div class="page-caption"><span class="source-dot" aria-hidden="true"></span><span title="${escapeHtml(source.name)}">${escapeHtml(source.name)}</span><span>p.${page.sourceIndex + 1}</span></div>
-      </article>
-    `
-  }).join('')
-
-  refreshIcons()
-  pruneThumbnails()
-  thumbObserver.disconnect()
-  pageGrid.querySelectorAll('.page-card').forEach((card) => {
-    const cached = thumbCache.get(thumbKey(state.pages.find((page) => page.id === card.dataset.pageId)))
-    if (cached) drawThumbnail(card, cached)
-    else thumbObserver.observe(card)
+  let createdAny = false
+  state.pages.forEach((page, index) => {
+    let card = cards.get(page.id)
+    if (!card) {
+      card = createCard(page)
+      cards.set(page.id, card)
+      createdAny = true
+    }
+    // 只在位置不對時才搬動節點。
+    if (pageGrid.children[index] !== card) pageGrid.insertBefore(card, pageGrid.children[index] ?? null)
+    updateCard(card, page, index)
   })
+  if (createdAny) refreshIcons()
 }
 
-const thumbCache = new Map()
-const thumbJobs = new Map()
+// ---- 縮圖：每張卡片只保留一個 canvas，離開可視範圍就釋放，並限制同時繪製數量 ----
+const THUMB_CSS_WIDTH = 228
+const THUMB_CONCURRENCY = 3
+const pendingThumbs = new Map() // pageId -> card，等待繪製
+const visibleCards = new WeakSet()
+let activeThumbJobs = 0
+
 const thumbObserver = new IntersectionObserver((entries) => {
   for (const entry of entries) {
-    if (!entry.isIntersecting) continue
-    thumbObserver.unobserve(entry.target)
-    renderThumbnail(entry.target.dataset.pageId)
+    const card = entry.target
+    if (entry.isIntersecting) {
+      visibleCards.add(card)
+      if (card.dataset.drawnKey !== card.dataset.wantedKey) {
+        pendingThumbs.set(card.dataset.pageId, card)
+      }
+    } else {
+      visibleCards.delete(card)
+      pendingThumbs.delete(card.dataset.pageId)
+      releaseThumbnail(card)
+    }
   }
-}, { rootMargin: '600px 0px' })
+  pumpThumbnails()
+}, { rootMargin: '800px 0px' })
 
 function thumbKey(page) {
   return `${page.id}:${page.rotation}`
 }
 
-function getThumbnail(page) {
-  const key = thumbKey(page)
-  if (thumbCache.has(key)) return Promise.resolve(thumbCache.get(key))
-  if (!thumbJobs.has(key)) {
-    const source = state.documents.find((sourceDoc) => sourceDoc.id === page.documentId)
-    const job = (async () => {
-      const pdfPage = await source.pdfJs.getPage(page.sourceIndex + 1)
-      const baseViewport = pdfPage.getViewport({ scale: 1 })
-      const scale = Math.min(1, 228 / baseViewport.width)
-      // getViewport 的 rotation 會取代頁面本身的 /Rotate，所以要疊加。
-      const pageViewport = pdfPage.getViewport({ scale, rotation: (pdfPage.rotate + page.rotation) % 360 })
-      const offscreen = document.createElement('canvas')
-      offscreen.width = Math.ceil(pageViewport.width)
-      offscreen.height = Math.ceil(pageViewport.height)
-      await pdfPage.render({ canvasContext: offscreen.getContext('2d', { alpha: false }), viewport: pageViewport }).promise
-      thumbCache.set(key, offscreen)
-      return offscreen
-    })().finally(() => thumbJobs.delete(key))
-    thumbJobs.set(key, job)
-  }
-  return thumbJobs.get(key)
-}
-
-function drawThumbnail(card, thumbnail) {
+function releaseThumbnail(card) {
+  if (!card.dataset.drawnKey) return
   const canvas = card.querySelector('canvas')
-  canvas.width = thumbnail.width
-  canvas.height = thumbnail.height
-  canvas.getContext('2d', { alpha: false }).drawImage(thumbnail, 0, 0)
-  card.querySelector('.preview-loading').hidden = true
+  canvas.width = 0
+  canvas.height = 0
+  delete card.dataset.drawnKey
+  card.querySelector('.preview-loading').hidden = false
 }
 
-async function renderThumbnail(pageId) {
-  const page = state.pages.find((candidate) => candidate.id === pageId)
-  if (!page) return
-  try {
-    const thumbnail = await getThumbnail(page)
-    const card = pageGrid.querySelector(`[data-page-id="${pageId}"]`)
-    const current = state.pages.find((candidate) => candidate.id === pageId)
-    if (card && current && thumbKey(current) === thumbKey(page)) drawThumbnail(card, thumbnail)
-  } catch {
-    const card = pageGrid.querySelector(`[data-page-id="${pageId}"]`)
-    const loading = card?.querySelector('.preview-loading')
-    if (loading) loading.innerHTML = '<span class="preview-error">無法預覽</span>'
+function pumpThumbnails() {
+  while (activeThumbJobs < THUMB_CONCURRENCY && pendingThumbs.size > 0) {
+    const [pageId, card] = pendingThumbs.entries().next().value
+    pendingThumbs.delete(pageId)
+    activeThumbJobs += 1
+    drawCardThumbnail(card).finally(() => {
+      activeThumbJobs -= 1
+      pumpThumbnails()
+    })
   }
 }
 
-function pruneThumbnails() {
-  const liveKeys = new Set(state.pages.map(thumbKey))
-  for (const key of thumbCache.keys()) if (!liveKeys.has(key)) thumbCache.delete(key)
+async function drawCardThumbnail(card) {
+  const page = state.pages.find((candidate) => candidate.id === card.dataset.pageId)
+  if (!page) return
+  const key = thumbKey(page)
+  const loading = card.querySelector('.preview-loading')
+  try {
+    const source = state.documents.find((sourceDoc) => sourceDoc.id === page.documentId)
+    const pdfPage = await source.pdfJs.getPage(page.sourceIndex + 1)
+    const baseViewport = pdfPage.getViewport({ scale: 1 })
+    const cssScale = Math.min(1, THUMB_CSS_WIDTH / baseViewport.width)
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2)
+    // getViewport 的 rotation 會取代頁面本身的 /Rotate，所以要疊加。
+    const rotation = (pdfPage.rotate + page.rotation) % 360
+    const cssViewport = pdfPage.getViewport({ scale: cssScale, rotation })
+    const pageViewport = pdfPage.getViewport({ scale: cssScale * pixelRatio, rotation })
+    const offscreen = document.createElement('canvas')
+    offscreen.width = Math.ceil(pageViewport.width)
+    offscreen.height = Math.ceil(pageViewport.height)
+    await pdfPage.render({ canvasContext: offscreen.getContext('2d', { alpha: false }), viewport: pageViewport }).promise
+
+    // 繪製期間卡片可能已被移除、捲出範圍或再次旋轉，此時丟棄結果。
+    const current = state.pages.find((candidate) => candidate.id === page.id)
+    if (!current || !card.isConnected || !visibleCards.has(card) || thumbKey(current) !== key) {
+      offscreen.width = 0
+      return
+    }
+    const canvas = card.querySelector('canvas')
+    canvas.width = offscreen.width
+    canvas.height = offscreen.height
+    canvas.style.width = `${Math.round(cssViewport.width)}px`
+    canvas.getContext('2d', { alpha: false }).drawImage(offscreen, 0, 0)
+    offscreen.width = 0 // 立即釋放離屏 canvas，只留下卡片上的一份。
+    card.dataset.drawnKey = key
+    loading.hidden = true
+  } catch (error) {
+    console.error(error)
+    loading.hidden = false
+    loading.innerHTML = '<span class="preview-error">無法預覽</span>'
+  }
 }
 
 function renderStatus() {
