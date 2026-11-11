@@ -53,3 +53,50 @@ test('add, rotate, reorder, delete, export and split', async ({ page }) => {
   expect(extracted.getPageCount()).toBe(2)
   expect(pageErrors).toEqual([])
 })
+
+test('undo delete, move buttons, drop indicator and loading text', async ({ page }) => {
+  await page.goto('./')
+  await page.setInputFiles('#file-input', [
+    { name: 'a.pdf', mimeType: 'application/pdf', buffer: await makePdf(3) },
+    { name: 'b.pdf', mimeType: 'application/pdf', buffer: await makePdf(2) },
+  ])
+  await expect(page.locator('.page-card')).toHaveCount(5)
+  const ids = () => page.locator('.page-card').evaluateAll((cards) => cards.map((card) => card.dataset.pageId))
+  const original = await ids()
+
+  // 移動按鈕（觸控替代方案）：選取第 3 頁後前移一格。
+  await page.locator('.page-check').nth(2).click()
+  await page.click('[data-action="move-earlier"]')
+  expect(await ids()).toEqual([original[0], original[2], original[1], original[3], original[4]])
+  await page.click('[data-action="move-later"]')
+  expect(await ids()).toEqual(original)
+
+  // 刪光 b.pdf 的頁面：側欄文件立即減少，按「復原」後全部回來且位置不變。
+  await page.click('[data-action="select-all"]')
+  await page.click('[data-action="select-all"]')
+  await page.locator('.page-check').nth(3).click()
+  await page.locator('.page-check').nth(4).click()
+  await page.click('[data-action="delete-selected"]')
+  await expect(page.locator('#document-stats')).toContainText('共 3 頁，來自 1 份文件')
+  await page.click('.toast-action')
+  await expect(page.locator('.page-card')).toHaveCount(5)
+  await expect(page.locator('#document-stats')).toContainText('共 5 頁，來自 2 份文件')
+  expect(await ids()).toEqual(original)
+
+  // Ctrl+Z 也能復原。
+  await page.click('[data-action="delete-selected"]')
+  await expect(page.locator('.page-card')).toHaveCount(3)
+  await page.keyboard.press('Control+z')
+  await expect(page.locator('.page-card')).toHaveCount(5)
+
+  // 拖曳時依左右半邊顯示插入線。
+  const target = page.locator('.page-card').nth(2)
+  const box = await target.boundingBox()
+  await page.locator('.page-card').nth(0).dispatchEvent('dragstart', { dataTransfer: await page.evaluateHandle(() => new DataTransfer()) })
+  await target.dispatchEvent('dragover', { clientX: box.x + box.width * 0.8, clientY: box.y + 10, dataTransfer: await page.evaluateHandle(() => new DataTransfer()) })
+  await expect(target).toHaveClass(/is-drop-after/)
+  await target.dispatchEvent('dragover', { clientX: box.x + box.width * 0.2, clientY: box.y + 10, dataTransfer: await page.evaluateHandle(() => new DataTransfer()) })
+  await expect(target).toHaveClass(/is-drop-before/)
+  await page.locator('.page-card').nth(0).dispatchEvent('dragend')
+  await expect(page.locator('.is-drop-before, .is-drop-after')).toHaveCount(0)
+})
