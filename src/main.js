@@ -187,7 +187,7 @@ function refreshIcons() {
   createIcons({ icons: iconSet, attrs: { 'stroke-width': 1.8 } })
 }
 
-function showToast(message, isError = false) {
+function showToast(message, isError = false, duration = 3200) {
   toast.textContent = message
   toast.classList.toggle('toast-error', isError)
   toast.classList.add('toast-visible')
@@ -365,11 +365,19 @@ async function addFiles(fileCollection) {
   }
 
   let addedCount = 0
+  const failures = []
   for (const file of pdfFiles) {
     try {
       const bytes = await file.arrayBuffer()
       const { PDFDocument, pdfjs } = await loadPdfRuntime()
-      const loadingTask = pdfjs.getDocument({ data: new Uint8Array(bytes.slice(0)) })
+      const assetBase = `${import.meta.env.BASE_URL}pdfjs/`
+      const loadingTask = pdfjs.getDocument({
+        data: new Uint8Array(bytes.slice(0)),
+        cMapUrl: `${assetBase}cmaps/`,
+        cMapPacked: true,
+        standardFontDataUrl: `${assetBase}standard_fonts/`,
+        wasmUrl: `${assetBase}wasm/`,
+      })
       let pdfJs
       let pdfLib
       try {
@@ -381,21 +389,25 @@ async function addFiles(fileCollection) {
       }
       const documentId = createId()
       const colorIndex = documentCounter++ % SOURCE_COLOR_COUNT
-      const document = { id: documentId, colorIndex, name: file.name, size: bytes.byteLength, pageCount: pdfJs.numPages, pdfJs, pdfLib }
-      state.documents.push(document)
-      for (let sourceIndex = 0; sourceIndex < document.pageCount; sourceIndex += 1) {
+      const sourceDoc = { id: documentId, colorIndex, name: file.name, size: bytes.byteLength, pageCount: pdfJs.numPages, pdfJs, pdfLib }
+      state.documents.push(sourceDoc)
+      for (let sourceIndex = 0; sourceIndex < sourceDoc.pageCount; sourceIndex += 1) {
         state.pages.push({ id: createId(), documentId, sourceIndex, rotation: 0 })
       }
       addedCount += 1
       renderAll()
     } catch (error) {
-      showToast(`無法讀取「${file.name}」，請確認檔案未加密且格式正確。`, true)
+      const encrypted = error?.name === 'PasswordException' || error?.constructor?.name === 'EncryptedPDFError' || /encrypted/i.test(error?.message ?? '')
+      failures.push(`「${file.name}」${encrypted ? '有密碼保護' : '檔案損毀或格式不符'}`)
       console.error(error)
     }
   }
 
-  if (addedCount > 0) {
-    showToast(addedCount === pdfFiles.length ? `已加入 ${addedCount} 個 PDF。` : `已加入 ${addedCount} 個 PDF，${pdfFiles.length - addedCount} 個失敗。`)
+  if (failures.length > 0) {
+    const added = addedCount > 0 ? `已加入 ${addedCount} 個 PDF；` : ''
+    showToast(`${added}${failures.length} 個無法讀取：${failures.join('、')}。`, true, 8000)
+  } else if (addedCount > 0) {
+    showToast(`已加入 ${addedCount} 個 PDF。`)
   }
 }
 
@@ -411,25 +423,33 @@ function togglePage(pageId) {
   renderStatus()
 }
 
+// 釋放已無任何頁面的來源文件（pdf.js 物件與 pdf-lib 文件）。
+function pruneEmptyDocuments() {
+  const used = new Set(state.pages.map((page) => page.documentId))
+  for (const sourceDoc of state.documents) if (!used.has(sourceDoc.id)) sourceDoc.pdfJs.destroy()
+  state.documents = state.documents.filter((sourceDoc) => used.has(sourceDoc.id))
+}
+
 function removeDocument(documentId) {
   if (state.busy) return
-  state.documents.find((document) => document.id === documentId)?.pdfJs.destroy()
-  state.documents = state.documents.filter((document) => document.id !== documentId)
   state.pages = state.pages.filter((page) => page.documentId !== documentId)
   state.selectedPages = new Set([...state.selectedPages].filter((pageId) => state.pages.some((page) => page.id === pageId)))
+  pruneEmptyDocuments()
   renderAll()
 }
+
+class PageRangeError extends Error {}
 
 function parsePageRange(value) {
   const indexes = new Set()
   for (const part of value.split(',')) {
     const trimmed = part.trim()
     const match = trimmed.match(/^(\d+)(?:\s*-\s*(\d+))?$/)
-    if (!match) throw new Error('頁碼格式錯誤，請使用例如 1-3, 5 的格式。')
+    if (!match) throw new PageRangeError('頁碼格式錯誤，請使用例如 1-3, 5 的格式。')
     const start = Number(match[1])
     const end = Number(match[2] ?? match[1])
     if (start < 1 || end < start || end > state.pages.length) {
-      throw new Error(`頁碼範圍需介於 1 到 ${state.pages.length} 頁。`)
+      throw new PageRangeError(`頁碼範圍需介於 1 到 ${state.pages.length} 頁。`)
     }
     for (let pageNumber = start; pageNumber <= end; pageNumber += 1) indexes.add(pageNumber - 1)
   }
@@ -485,16 +505,17 @@ function downloadFile(contents, filename, mimeType) {
   link.href = url
   link.download = filename
   link.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
 async function exportMergedPdf() {
   if (state.pages.length === 0 || state.busy) return
   setBusy(true, '正在整理頁面並匯出…')
   try {
-    const bytes = await createPdf(state.pages)
+    const snapshot = [...state.pages]
+    const bytes = await createPdf(snapshot)
     downloadFile(bytes, '頁序-合併.pdf', 'application/pdf')
-    showToast(`已匯出 ${state.pages.length} 頁 PDF。`)
+    showToast(`已匯出 ${snapshot.length} 頁 PDF。`)
   } catch (error) {
     showToast('匯出失敗，請確認 PDF 檔案未加密。', true)
     console.error(error)
@@ -507,7 +528,7 @@ async function exportMergedPdf() {
 async function splitPdf() {
   try {
     const pages = parsePageRange(document.querySelector('#page-range').value)
-    if (pages.length === 0) throw new Error('請至少指定一頁。')
+    if (pages.length === 0) throw new PageRangeError('請至少指定一頁。')
     const mode = document.querySelector('input[name="split-mode"]:checked').value
     setBusy(true, '正在拆分 PDF…')
 
@@ -530,8 +551,12 @@ async function splitPdf() {
     splitDialog.close()
     showToast(`已完成 ${pages.length} 頁拆分。`)
   } catch (error) {
-    showToast(error.message || '拆分失敗，請確認 PDF 檔案未加密。', true)
-    if (!(error instanceof Error && /頁碼|指定/.test(error.message))) console.error(error)
+    if (error instanceof PageRangeError) {
+      showToast(error.message, true)
+    } else {
+      showToast('拆分失敗，請確認 PDF 檔案未加密。', true)
+      console.error(error)
+    }
   } finally {
     setBusy(false)
     renderStatus()
@@ -562,6 +587,7 @@ app.addEventListener('click', (event) => {
   if (action === 'delete-selected') {
     state.pages = state.pages.filter((page) => !state.selectedPages.has(page.id))
     state.selectedPages.clear()
+    pruneEmptyDocuments()
     renderAll()
   }
   if (action === 'select-all') {
