@@ -1,4 +1,6 @@
 import {
+  ArrowLeft,
+  ArrowRight,
   Check,
   Combine,
   FilePlus2,
@@ -18,6 +20,8 @@ import {
 export const app = document.querySelector('#app')
 
 const iconSet = {
+  ArrowLeft,
+  ArrowRight,
   Check,
   Combine,
   FilePlus2,
@@ -72,6 +76,12 @@ app.innerHTML = `
           <span class="selection-summary" id="selection-summary">尚未選取頁面</span>
         </div>
         <div class="tool-group">
+          <button class="tool-button" type="button" data-action="move-earlier" title="將所選頁面往前移一格" aria-label="將所選頁面往前移" disabled>
+            <i data-lucide="arrow-left"></i><span>前移</span>
+          </button>
+          <button class="tool-button" type="button" data-action="move-later" title="將所選頁面往後移一格" aria-label="將所選頁面往後移" disabled>
+            <i data-lucide="arrow-right"></i><span>後移</span>
+          </button>
           <button class="tool-button" type="button" data-action="rotate-selected" title="將所選頁面旋轉 90 度" aria-label="旋轉所選頁面" disabled>
             <i data-lucide="rotate-cw"></i><span>旋轉</span>
           </button>
