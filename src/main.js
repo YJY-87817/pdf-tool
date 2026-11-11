@@ -39,7 +39,7 @@ async function addFiles(fileCollection) {
       }
       const documentId = createId()
       const colorIndex = nextColorIndex()
-      const sourceDoc = { id: documentId, colorIndex, name: file.name, size: bytes.byteLength, pageCount: pdfJs.numPages, pdfJs, pdfLib }
+      const sourceDoc = { id: documentId, colorIndex, name: file.name, size: bytes.byteLength, pageCount: pdfJs.numPages, pdfJs, loadingTask, pdfLib }
       state.documents.push(sourceDoc)
       for (let sourceIndex = 0; sourceIndex < sourceDoc.pageCount; sourceIndex += 1) {
         state.pages.push({ id: createId(), documentId, sourceIndex, rotation: 0 })

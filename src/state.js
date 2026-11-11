@@ -20,7 +20,7 @@ export function createId() {
 // 釋放已無任何頁面的來源文件（pdf.js 物件與 pdf-lib 文件）。
 export function pruneEmptyDocuments() {
   const used = new Set(state.pages.map((page) => page.documentId))
-  for (const sourceDoc of state.documents) if (!used.has(sourceDoc.id)) sourceDoc.pdfJs.destroy()
+  for (const sourceDoc of state.documents) if (!used.has(sourceDoc.id)) sourceDoc.loadingTask.destroy()
   state.documents = state.documents.filter((sourceDoc) => used.has(sourceDoc.id))
 }
 
