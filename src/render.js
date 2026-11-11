@@ -1,25 +1,13 @@
 import { emptyState, fileList, pageGrid, refreshIcons, toast } from './dom.js'
 import { escapeHtml } from './lib/html.js'
 import { formatBytes } from './lib/format.js'
-import { activeDocuments, state } from './state.js'
+import { state } from './state.js'
 import { thumbKey, thumbObserver, pendingThumbs } from './thumbnails.js'
 
 let toastTimer
 
-export function showToast(message, isError = false, duration = 3200, action = null) {
+export function showToast(message, isError = false, duration = 3200) {
   toast.textContent = message
-  toast.classList.toggle('toast-actionable', Boolean(action))
-  if (action) {
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.className = 'toast-action'
-    button.textContent = action.label
-    button.addEventListener('click', () => {
-      toast.classList.remove('toast-visible')
-      action.onClick()
-    })
-    toast.append(button)
-  }
   toast.classList.toggle('toast-error', isError)
   toast.classList.add('toast-visible')
   clearTimeout(toastTimer)
@@ -37,14 +25,13 @@ export function setBusy(busy, message = '') {
 }
 
 export function renderFiles() {
-  const documents = activeDocuments()
-  document.querySelector('#file-count').textContent = String(documents.length)
-  if (documents.length === 0) {
+  document.querySelector('#file-count').textContent = String(state.documents.length)
+  if (state.documents.length === 0) {
     fileList.innerHTML = '<p class="file-list-empty">加入的文件會列在這裡</p>'
     return
   }
 
-  fileList.innerHTML = documents.map((sourceDoc) => `
+  fileList.innerHTML = state.documents.map((sourceDoc) => `
     <article class="source-file source-${sourceDoc.colorIndex}">
       <span class="source-icon"><i data-lucide="files"></i></span>
       <div class="source-details">
@@ -143,14 +130,12 @@ export function renderPages() {
 export function renderStatus() {
   const selectedCount = state.selectedPages.size
   const allSelected = state.pages.length > 0 && selectedCount === state.pages.length
-  document.querySelector('#document-stats').textContent = state.loadingText || (state.pages.length
-    ? `共 ${state.pages.length} 頁，來自 ${activeDocuments().length} 份文件`
-    : '尚未加入文件')
+  document.querySelector('#document-stats').textContent = state.pages.length
+    ? `共 ${state.pages.length} 頁，來自 ${state.documents.length} 份文件`
+    : '尚未加入文件'
   document.querySelector('#selection-summary').textContent = selectedCount
     ? `已選取 ${selectedCount} / ${state.pages.length} 頁`
     : state.pages.length ? '點選頁面以選取' : '尚未加入頁面'
-  document.querySelector('[data-action="move-earlier"]').disabled = selectedCount === 0 || state.busy
-  document.querySelector('[data-action="move-later"]').disabled = selectedCount === 0 || state.busy
   document.querySelector('[data-action="rotate-selected"]').disabled = selectedCount === 0 || state.busy
   document.querySelector('[data-action="delete-selected"]').disabled = selectedCount === 0 || state.busy
   const selectAllButton = document.querySelector('[data-action="select-all"]')
@@ -166,13 +151,4 @@ export function renderAll() {
   renderFiles()
   renderPages()
   renderStatus()
-}
-
-export function setLoadingText(text) {
-  state.loadingText = text
-  renderStatus()
-}
-
-export function setProgress(text) {
-  document.querySelector('#selection-summary').textContent = text
 }

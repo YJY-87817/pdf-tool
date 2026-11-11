@@ -2,9 +2,9 @@ import './app.css'
 import JSZip from 'jszip'
 import { app, fileInput, pageGrid, splitDialog } from './dom.js'
 import { PageRangeError, formatPageRange, parsePageRange } from './lib/page-range.js'
-import { reorderPages, restorePages, shiftPages } from './lib/reorder.js'
+import { reorderPages } from './lib/reorder.js'
 import { createPdf, loadPdfRuntime } from './pdf-runtime.js'
-import { renderAll, renderPages, renderStatus, setBusy, setLoadingText, setProgress, showToast } from './render.js'
+import { renderAll, renderPages, renderStatus, setBusy, showToast } from './render.js'
 import { createId, nextColorIndex, pruneEmptyDocuments, state } from './state.js'
 
 async function addFiles(fileCollection) {
@@ -16,8 +16,7 @@ async function addFiles(fileCollection) {
 
   let addedCount = 0
   const failures = []
-  for (const [fileIndex, file] of pdfFiles.entries()) {
-    setLoadingText(`正在讀取 ${fileIndex + 1} / ${pdfFiles.length}：${file.name}`)
+  for (const file of pdfFiles) {
     try {
       const bytes = await file.arrayBuffer()
       const { PDFDocument, pdfjs } = await loadPdfRuntime()
@@ -54,8 +53,6 @@ async function addFiles(fileCollection) {
     }
   }
 
-  setLoadingText('')
-
   if (failures.length > 0) {
     const added = addedCount > 0 ? `已加入 ${addedCount} 個 PDF；` : ''
     showToast(`${added}${failures.length} 個無法讀取：${failures.join('、')}。`, true, 8000)
@@ -78,67 +75,10 @@ function togglePage(pageId) {
 
 function removeDocument(documentId) {
   if (state.busy) return
-  finalizeUndo()
   state.pages = state.pages.filter((page) => page.documentId !== documentId)
   state.selectedPages = new Set([...state.selectedPages].filter((pageId) => state.pages.some((page) => page.id === pageId)))
   pruneEmptyDocuments()
   renderAll()
-}
-
-// ---- 刪除與復原 ----
-// 刪除後保留被刪頁面一段時間；期間來源文件不釋放，期限過後才真正清理。
-const UNDO_WINDOW_MS = 8000
-let undo = null
-
-function finalizeUndo() {
-  if (!undo) return
-  clearTimeout(undo.timer)
-  undo = null
-  pruneEmptyDocuments()
-}
-
-function deleteSelectedPages() {
-  if (state.selectedPages.size === 0) return
-  finalizeUndo()
-  const entries = []
-  state.pages.forEach((page, index) => {
-    if (state.selectedPages.has(page.id)) entries.push({ page, index })
-  })
-  state.pages = state.pages.filter((page) => !state.selectedPages.has(page.id))
-  state.selectedPages.clear()
-  renderAll()
-  undo = { entries, timer: setTimeout(finalizeUndo, UNDO_WINDOW_MS) }
-  showToast(`已刪除 ${entries.length} 頁。`, false, UNDO_WINDOW_MS, { label: '復原', onClick: undoDelete })
-}
-
-function undoDelete() {
-  if (!undo || state.busy) return
-  const { entries } = undo
-  clearTimeout(undo.timer)
-  undo = null
-  state.pages = restorePages(state.pages, entries)
-  state.selectedPages = new Set(entries.map(({ page }) => page.id))
-  renderAll()
-  showToast(`已復原 ${entries.length} 頁。`)
-}
-
-document.addEventListener('keydown', (event) => {
-  if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.key.toLowerCase() !== 'z') return
-  if (event.target.closest('input, textarea, [contenteditable]') || splitDialog.open) return
-  if (!undo) return
-  event.preventDefault()
-  undoDelete()
-})
-
-// 工具列的「前移／後移」：觸控與鍵盤都能用，重用 shiftPages。
-function shiftSelected(direction) {
-  const shifted = shiftPages(state.pages, state.selectedPages, direction)
-  if (!shifted) return
-  state.pages = shifted
-  renderPages()
-  renderStatus()
-  const first = state.pages.find((page) => state.selectedPages.has(page.id))
-  pageGrid.querySelector(`[data-page-id="${first.id}"]`)?.scrollIntoView({ block: 'nearest' })
 }
 
 function getDefaultSplitRange() {
@@ -184,15 +124,12 @@ async function splitPdf() {
     if (mode === 'zip') {
       const zip = new JSZip()
       for (let index = 0; index < pages.length; index += 1) {
-        setProgress(`正在拆分第 ${index + 1} / ${pages.length} 頁…`)
-        await new Promise((resolve) => setTimeout(resolve, 0)) // 讓出執行權，進度文字才畫得出來
         const page = pages[index]
         const source = state.documents.find((sourceDoc) => sourceDoc.id === page.documentId)
         const sourceName = source?.name.replace(/\.pdf$/i, '') ?? 'page'
         const bytes = await createPdf([page])
         zip.file(`${sourceName}-${String(index + 1).padStart(3, '0')}.pdf`, bytes)
       }
-      setProgress('正在壓縮 ZIP…')
       const archive = await zip.generateAsync({ type: 'uint8array' })
       downloadFile(archive, '頁序-逐頁拆分.zip', 'application/zip')
     } else {
@@ -236,9 +173,12 @@ app.addEventListener('click', (event) => {
     })
     renderPages()
   }
-  if (action === 'delete-selected') deleteSelectedPages()
-  if (action === 'move-earlier') shiftSelected(-1)
-  if (action === 'move-later') shiftSelected(1)
+  if (action === 'delete-selected') {
+    state.pages = state.pages.filter((page) => !state.selectedPages.has(page.id))
+    state.selectedPages.clear()
+    pruneEmptyDocuments()
+    renderAll()
+  }
   if (action === 'select-all') {
     if (state.selectedPages.size === state.pages.length) state.selectedPages.clear()
     else state.selectedPages = new Set(state.pages.map((page) => page.id))
@@ -269,16 +209,6 @@ fileInput.addEventListener('change', async () => {
   fileInput.value = ''
 })
 
-// 依游標在卡片左半或右半，決定插入點在目標之前或之後。
-function dropSide(event, target) {
-  const bounds = target.getBoundingClientRect()
-  return event.clientX > bounds.left + bounds.width / 2 ? 'after' : 'before'
-}
-
-function clearDropIndicators() {
-  pageGrid.querySelectorAll('.is-drop-before, .is-drop-after').forEach((card) => card.classList.remove('is-drop-before', 'is-drop-after'))
-}
-
 pageGrid.addEventListener('dragstart', (event) => {
   const card = event.target.closest('.page-card')
   if (!card) return
@@ -286,31 +216,19 @@ pageGrid.addEventListener('dragstart', (event) => {
   card.classList.add('is-dragging')
   event.dataTransfer.effectAllowed = 'move'
   event.dataTransfer.setData('text/plain', state.draggedPageId)
-  // 一次拖多頁時，拖影顯示頁數。
-  if (state.selectedPages.has(state.draggedPageId) && state.selectedPages.size > 1) {
-    const badge = document.createElement('div')
-    badge.className = 'drag-badge'
-    badge.textContent = `${state.selectedPages.size} 頁`
-    document.body.append(badge)
-    event.dataTransfer.setDragImage(badge, 20, 16)
-    setTimeout(() => badge.remove(), 0)
-  }
 })
 
 pageGrid.addEventListener('dragend', () => {
   state.draggedPageId = null
-  pageGrid.querySelectorAll('.is-dragging').forEach((card) => card.classList.remove('is-dragging'))
-  clearDropIndicators()
+  pageGrid.querySelectorAll('.page-card').forEach((card) => card.classList.remove('is-dragging', 'is-drop-target'))
 })
 
 pageGrid.addEventListener('dragover', (event) => {
   const target = event.target.closest('.page-card')
   if (!target || !state.draggedPageId || target.dataset.pageId === state.draggedPageId) return
   event.preventDefault()
-  const side = dropSide(event, target)
-  if (target.classList.contains(`is-drop-${side}`)) return
-  clearDropIndicators()
-  target.classList.add(`is-drop-${side}`)
+  pageGrid.querySelectorAll('.is-drop-target').forEach((card) => card.classList.remove('is-drop-target'))
+  target.classList.add('is-drop-target')
 })
 
 pageGrid.addEventListener('drop', (event) => {
@@ -318,9 +236,8 @@ pageGrid.addEventListener('drop', (event) => {
   const target = event.target.closest('.page-card')
   if (!target || !state.draggedPageId || target.dataset.pageId === state.draggedPageId) return
   event.preventDefault()
-  const placeAfter = dropSide(event, target) === 'after'
-  clearDropIndicators()
-  movePages(state.draggedPageId, target.dataset.pageId, placeAfter)
+  const bounds = target.getBoundingClientRect()
+  movePages(state.draggedPageId, target.dataset.pageId, event.clientX > bounds.left + bounds.width / 2)
 })
 
 // 拖曳已選取的頁面時，會一併移動所有已選取的頁面。

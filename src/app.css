@@ -204,11 +204,7 @@ button { color: inherit; }
 .page-preview { position: relative; aspect-ratio: 3 / 4; display: grid; place-items: center; overflow: hidden; padding: 10px; border-radius: 8px; background: var(--surface-2); outline: 2px solid transparent; outline-offset: 3px; transition: outline-color 120ms ease, background 120ms ease; }
 .page-card:hover .page-preview { background: var(--surface-hover); }
 .page-card.is-selected .page-preview { outline-color: var(--accent); background: var(--accent-soft); }
-.page-card.is-drop-before, .page-card.is-drop-after { position: relative; }
-.page-card.is-drop-before::before, .page-card.is-drop-after::after { content: ''; position: absolute; top: 0; bottom: 0; width: 4px; border-radius: 2px; background: var(--accent); z-index: 2; pointer-events: none; }
-.page-card.is-drop-before::before { left: -12px; }
-.page-card.is-drop-after::after { right: -12px; }
-.drag-badge { position: fixed; top: -100px; left: -100px; padding: 6px 12px; border-radius: 8px; background: var(--accent); color: var(--accent-ink); font-size: 14px; font-weight: 600; }
+.page-card.is-drop-target .page-preview { outline: 2px dashed var(--accent); }
 .page-canvas { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; border-radius: 2px; background: #fff; box-shadow: var(--page-shadow); transition: box-shadow 140ms ease, transform 140ms ease; }
 .page-card:hover .page-canvas { box-shadow: var(--page-shadow-hover); transform: translateY(-1px); }
 .preview-loading { position: absolute; inset: 0; display: grid; place-items: center; }
@@ -257,9 +253,6 @@ button { color: inherit; }
 /* Toast */
 .toast { position: fixed; z-index: 5; left: 50%; bottom: 60px; max-width: calc(100vw - 32px); padding: 10px 16px; border-radius: 10px; background: var(--ink); box-shadow: var(--overlay-shadow); color: var(--bg); font-size: 14px; opacity: 0; pointer-events: none; transform: translate(-50%, 8px); transition: opacity 180ms ease, transform 180ms ease; }
 .toast-visible { opacity: 1; transform: translate(-50%, 0); }
-.toast-actionable { display: flex; align-items: center; gap: 14px; pointer-events: auto; }
-.toast-action { padding: 4px 10px; border: 1px solid currentcolor; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; font: inherit; font-weight: 600; }
-.toast-action:hover { background: rgb(255 255 255 / 16%); }
 .toast-error { background: var(--danger); color: #fff; }
 
 @keyframes arrive { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
