@@ -6,10 +6,18 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:e2e": "playwright test --trace off"
   },
   "devDependencies": {
-    "vite": "^8.3.0"
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0",
+    "vite": "^8.3.0",
+    "vitest": "^5.1.0"
   },
   "dependencies": {
     "jszip": "^3.10.2",
