@@ -37,3 +37,7 @@ npm run build
 ```
 
 PR 會由 `.github/workflows/ci.yml` 跑 lint、單元測試、建置與端對端測試。推送到 `main` 會自動部署到 GitHub Pages（網站在 `/pdf-tool/` 子路徑，見 `vite.config.js`）。
+
+## 授權
+
+[MIT](LICENSE)
