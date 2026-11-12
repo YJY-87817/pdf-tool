@@ -1,6 +1,6 @@
 import './app.css'
-import JSZip from 'jszip'
 import { app, fileInput, pageGrid, splitDialog } from './dom.js'
+import { exportFileName, zipEntryName } from './lib/filenames.js'
 import { PageRangeError, formatPageRange, parsePageRange } from './lib/page-range.js'
 import { reorderPages, restorePages, shiftPages } from './lib/reorder.js'
 import { createPdf, loadPdfRuntime } from './pdf-runtime.js'
@@ -148,12 +148,20 @@ function getDefaultSplitRange() {
   return selectedNumbers.length ? formatPageRange(selectedNumbers) : `1-${state.pages.length}`
 }
 
+function sourceNamesOf(pages) {
+  return pages.map((page) => state.documents.find((sourceDoc) => sourceDoc.id === page.documentId)?.name ?? '頁序')
+}
+
 function downloadFile(contents, filename, mimeType) {
   const url = URL.createObjectURL(new Blob([contents], { type: mimeType }))
   const link = document.createElement('a')
   link.href = url
   link.download = filename
+  // 連結要掛進文件中，部分瀏覽器才會採用 download 指定的檔名。
+  link.hidden = true
+  document.body.append(link)
   link.click()
+  link.remove()
   setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
@@ -163,7 +171,7 @@ async function exportMergedPdf() {
   try {
     const snapshot = [...state.pages]
     const bytes = await createPdf(snapshot)
-    downloadFile(bytes, '頁序-合併.pdf', 'application/pdf')
+    downloadFile(bytes, exportFileName(sourceNamesOf(snapshot), '合併', 'pdf'), 'application/pdf')
     showToast(`已匯出 ${snapshot.length} 頁 PDF。`)
   } catch (error) {
     showToast('匯出失敗，請確認 PDF 檔案未加密。', true)
@@ -182,22 +190,23 @@ async function splitPdf() {
     setBusy(true, '正在拆分 PDF…')
 
     if (mode === 'zip') {
+      // JSZip 只有逐頁拆分才用得到，延後載入。
+      const { default: JSZip } = await import('jszip')
       const zip = new JSZip()
       for (let index = 0; index < pages.length; index += 1) {
         setProgress(`正在拆分第 ${index + 1} / ${pages.length} 頁…`)
         await new Promise((resolve) => setTimeout(resolve, 0)) // 讓出執行權，進度文字才畫得出來
         const page = pages[index]
-        const source = state.documents.find((sourceDoc) => sourceDoc.id === page.documentId)
-        const sourceName = source?.name.replace(/\.pdf$/i, '') ?? 'page'
+        const [sourceName] = sourceNamesOf([page])
         const bytes = await createPdf([page])
-        zip.file(`${sourceName}-${String(index + 1).padStart(3, '0')}.pdf`, bytes)
+        zip.file(zipEntryName(index, pages.length, sourceName, page.sourceIndex), bytes)
       }
       setProgress('正在壓縮 ZIP…')
       const archive = await zip.generateAsync({ type: 'uint8array' })
-      downloadFile(archive, '頁序-逐頁拆分.zip', 'application/zip')
+      downloadFile(archive, exportFileName(sourceNamesOf(pages), '逐頁拆分', 'zip'), 'application/zip')
     } else {
       const bytes = await createPdf(pages)
-      downloadFile(bytes, '頁序-擷取頁面.pdf', 'application/pdf')
+      downloadFile(bytes, exportFileName(sourceNamesOf(pages), '擷取頁面', 'pdf'), 'application/pdf')
     }
 
     splitDialog.close()
