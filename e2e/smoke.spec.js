@@ -9,7 +9,11 @@ async function makePdf(pageCount) {
 
 test('add, rotate, reorder, delete, export and split', async ({ page }) => {
   const pageErrors = []
+  const externalRequests = []
   page.on('pageerror', (error) => pageErrors.push(error.message))
+  page.on('request', (request) => {
+    if (!request.url().startsWith('http://localhost:4173/') && !request.url().startsWith('blob:') && !request.url().startsWith('data:')) externalRequests.push(request.url())
+  })
   await page.goto('./')
   await page.setInputFiles('#file-input', [
     { name: 'a.pdf', mimeType: 'application/pdf', buffer: await makePdf(3) },
@@ -32,6 +36,7 @@ test('add, rotate, reorder, delete, export and split', async ({ page }) => {
 
   // 匯出合併檔，驗證頁數與旋轉角度（原第 2 頁現在是第 1 頁）。
   const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="merge"]')])
+  expect(download.suggestedFilename()).toMatch(/^頁序-合併-\d{8}-\d{4}\.pdf$/)
   const exported = await PDFDocument.load(await (await import('node:fs/promises')).readFile(await download.path()))
   expect(exported.getPageCount()).toBe(5)
   expect(exported.getPages().map((p) => p.getRotation().angle)).toEqual([90, 0, 0, 0, 0])
@@ -51,7 +56,9 @@ test('add, rotate, reorder, delete, export and split', async ({ page }) => {
   const [split] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="confirm-split"]')])
   const extracted = await PDFDocument.load(await (await import('node:fs/promises')).readFile(await split.path()))
   expect(extracted.getPageCount()).toBe(2)
+  expect(split.suggestedFilename()).toMatch(/^a-擷取頁面-\d{8}-\d{4}\.pdf$/)
   expect(pageErrors).toEqual([])
+  expect(externalRequests).toEqual([])
 })
 
 test('undo delete, move buttons, drop indicator and loading text', async ({ page }) => {

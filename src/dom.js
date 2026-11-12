@@ -39,7 +39,7 @@ const iconSet = {
 
 app.innerHTML = `
   <header class="topbar">
-    <a class="brand" href="#" aria-label="頁序 PDF 工作台首頁">
+    <a class="brand" href="${import.meta.env.BASE_URL}" aria-label="頁序 PDF 工作台首頁">
       <span class="brand-mark"><i data-lucide="file-stack"></i></span>
       <span class="brand-name">頁序</span>
       <span class="brand-tag">PDF</span>
